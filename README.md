@@ -1,5 +1,7 @@
 # tcpduplex
 
+**Repository:** [https://github.com/hdmain/tcpduplex](https://github.com/hdmain/tcpduplex)
+
 **tcpduplex** is a small Go library for **encrypted full-duplex messaging over TCP**: X25519 ECDH, AES-256-GCM, length-prefixed records, and concurrent read/write loops. It is **not** TLS and does **not** replace certificate-based authentication for the public internet; it suits private networks, constrained environments, or protocols where you control both peers.
 
 ## Requirements
@@ -9,12 +11,14 @@
 ## Install
 
 ```bash
-go get tcpduplex
+go get github.com/hdmain/tcpduplex
 ```
 
-Use the **module path** declared in [`go.mod`](go.mod). For a **local checkout**, point consumers at it with a `replace` directive (or a vanity import path) instead of `go get`.
+Module path: [`github.com/hdmain/tcpduplex`](https://github.com/hdmain/tcpduplex) (see [`go.mod`](go.mod)). For a **local checkout**, point consumers at it with a `replace` directive if needed.
 
-When developing inside this repository, imports use the module name `tcpduplex`.
+```go
+import "github.com/hdmain/tcpduplex"
+```
 
 ## Features
 
@@ -23,13 +27,16 @@ When developing inside this repository, imports use the module name `tcpduplex`.
 - **`context.Context`**: `DialContext`, `ServeConnContext`, `SendContext`, `ReceiveContext`, `Shutdown`, `Server.Serve`.
 - **`Config`**: dial/handshake timeouts, protocol version, queue depths, PSK + peer fingerprint hooks.
 - **`Server`**: `Listen` + `Serve` with per-connection `onConnect`.
-- Subpackages [`tcpduplex/protocol`](protocol/) (framing, versioning) and [`tcpduplex/crypto`](crypto/) (handshake, AES-GCM session).
+- Subpackages [`github.com/hdmain/tcpduplex/protocol`](protocol/) (framing, versioning), [`github.com/hdmain/tcpduplex/crypto`](crypto/) (handshake, AES-GCM session), and [`github.com/hdmain/tcpduplex/transfer`](transfer/) (encrypted resumable file transfers).
+- **Encrypted file transfer**: chunked, windowed sends over the existing AES-GCM session; automatic resume from the last acknowledged offset when `Options.Redial` reconnects after an interrupt.
 
 ## Quick start
 
 ### Client
 
 ```go
+import "github.com/hdmain/tcpduplex"
+
 conn, err := tcpduplex.Dial("127.0.0.1:9090")
 if err != nil {
     log.Fatal(err)
@@ -49,6 +56,12 @@ log.Printf("got: %s", msg)
 ### Server (manual accept)
 
 ```go
+import (
+    "net"
+
+    "github.com/hdmain/tcpduplex"
+)
+
 ln, err := net.Listen("tcp", ":9090")
 if err != nil {
     log.Fatal(err)
@@ -72,6 +85,12 @@ msg, err := conn.Receive()
 ### Server helper (`Listen` + `Serve`)
 
 ```go
+import (
+    "context"
+
+    "github.com/hdmain/tcpduplex"
+)
+
 srv, err := tcpduplex.Listen("tcp", ":9090", nil)
 if err != nil {
     log.Fatal(err)
@@ -95,6 +114,40 @@ go func() {
 
 Cancel `ctx` (or call `srv.Close()`) to unblock `Accept` and stop accepting new peers.
 
+## Encrypted file transfer
+
+Package [`transfer`](transfer/) copies files or `io.ReaderAt` streams over a `Conn`. Data is encrypted by the session (no second cipher layer). Large chunks plus a sliding ACK window keep the pipe full.
+
+```go
+import (
+    "context"
+
+    "github.com/hdmain/tcpduplex"
+    "github.com/hdmain/tcpduplex/transfer"
+)
+
+// sender
+err := transfer.SendFile(ctx, conn, "/path/to/file", &transfer.Options{
+    ChunkSize: 256 << 10, // fit under Config.MaxMessageBytes
+    Window:    32,        // unacked chunks in flight
+    Redial: func(ctx context.Context) (*tcpduplex.Conn, error) {
+        return tcpduplex.DialContext(ctx, addr, cfg)
+    },
+})
+
+// receiver (resumes if dest already has a prefix of the file)
+meta, err := transfer.ReceiveFile(ctx, conn, "/path/to/dest", &transfer.Options{
+    Redial: func(ctx context.Context) (*tcpduplex.Conn, error) {
+        // accept/handshake a replacement Conn
+        return nextConn, nil
+    },
+})
+```
+
+Each transfer has a stable 16-byte ID. After a drop, both sides redial, the sender re-offers the same ID, the receiver reports how many bytes it already has, and the sender continues from that offset—already written data is kept.
+
+While a transfer is running, do not use the same `Conn` for other `Send`/`Receive` traffic (frames share `MsgText`).
+
 ## Configuration
 
 Pass a non-nil [`Config`](config.go) to `DialContext` / `ServeConnContext` / `Listen`:
@@ -116,6 +169,8 @@ Use [`PeerPublicKeyFingerprint`](fingerprint.go) to compute the fingerprint from
 Example with PSK:
 
 ```go
+import "github.com/hdmain/tcpduplex"
+
 cfg := tcpduplex.DefaultConfig()
 cfg.Handshake.PreSharedKey = []byte("rotate-this-secret")
 
@@ -138,29 +193,32 @@ Calling `Close`/`Shutdown` more than once returns [`ErrClosed`](errors.go).
 2. **Records**  
    `uint32` BE length (includes 1-byte type + sealed blob), type byte (`MsgText`, `MsgPing`, `MsgPong`, `MsgClose`), then **nonce ‖ ciphertext ‖ tag** from AES-GCM.
 
-Details and constants live in package [`tcpduplex/protocol`](protocol/).
+Details and constants live in package [`github.com/hdmain/tcpduplex/protocol`](protocol/).
 
 ## Examples in this repo
 
 | Path | Description |
 |------|-------------|
-| [`examples/simple`](examples/simple/main.go) | Minimal listen/dial round-trip. |
-| [`cmd/server`](cmd/server/main.go) | Chat-style server using `Listen` + `Serve`. |
-| [`cmd/client`](cmd/client/main.go) | Line-oriented client. |
+| [`examples/simple`](https://github.com/hdmain/tcpduplex/tree/main/examples/simple) | Minimal listen/dial round-trip. |
+| [`examples/transfer`](https://github.com/hdmain/tcpduplex/tree/main/examples/transfer) | Encrypted file send/receive. |
+| [`cmd/server`](https://github.com/hdmain/tcpduplex/tree/main/cmd/server) | Chat-style server using `Listen` + `Serve`. |
+| [`cmd/client`](https://github.com/hdmain/tcpduplex/tree/main/cmd/client) | Line-oriented client. |
 
 ```bash
 go run ./examples/simple
+go run ./examples/transfer
 go run ./cmd/server -listen :9090
 go run ./cmd/client -addr 127.0.0.1:9090
 ```
 
 ## Documentation (godoc)
 
-Package overviews for godoc:
+Package overviews for godoc ([pkg.go.dev/github.com/hdmain/tcpduplex](https://pkg.go.dev/github.com/hdmain/tcpduplex)):
 
-- [`tcpduplex` package](doc.go) — `Conn`, dial/serve, server, config.
-- [`tcpduplex/protocol`](protocol/doc.go) — framing and versioning.
-- [`tcpduplex/crypto`](crypto/doc.go) — ECDH session and optional handshake auth.
+- [`github.com/hdmain/tcpduplex`](doc.go) — `Conn`, dial/serve, server, config.
+- [`github.com/hdmain/tcpduplex/protocol`](protocol/doc.go) — framing and versioning.
+- [`github.com/hdmain/tcpduplex/crypto`](crypto/doc.go) — ECDH session and optional handshake auth.
+- [`github.com/hdmain/tcpduplex/transfer`](transfer/doc.go) — encrypted resumable file transfers.
 
 Local viewing:
 
@@ -168,9 +226,10 @@ Local viewing:
 go doc -all .
 go doc -all ./protocol
 go doc -all ./crypto
+go doc -all ./transfer
 ```
 
-Or run `pkgsite` / `godoc` against the module root.
+Or run `pkgsite` / `godoc` against the module root ([github.com/hdmain/tcpduplex](https://github.com/hdmain/tcpduplex)).
 
 ## Security notes
 

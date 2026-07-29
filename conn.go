@@ -331,3 +331,8 @@ flush:
 func (c *Conn) Underlying() net.Conn {
 	return c.nc
 }
+
+// MaxMessageBytes returns the plaintext size limit configured for this session.
+func (c *Conn) MaxMessageBytes() int {
+	return c.cfg.MaxMessageBytes
+}

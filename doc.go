@@ -1,6 +1,9 @@
 // Package tcpduplex provides encrypted full-duplex messaging over TCP using X25519 ECDH
 // followed by AES-256-GCM record encryption.
 //
+// Module: github.com/hdmain/tcpduplex
+// Repository: https://github.com/hdmain/tcpduplex
+//
 // Entry points:
 //   - Dial / DialContext — TCP client plus handshake; returns *Conn.
 //   - ServeConn / ServeConnContext — server handshake on an accepted net.Conn; returns *Conn.
@@ -13,6 +16,7 @@
 // Optional authentication uses Config.Handshake: PreSharedKey mixing and/or
 // ExpectedPeerPubKeySHA256 (SHA256 of raw peer X25519 public key bytes).
 //
-// Subpackages protocol (wire format, versioning) and crypto (handshake, Session) are
-// layered deliberately so framing and cryptography stay testable in isolation.
+// Subpackages protocol (wire format, versioning), crypto (handshake, Session), and
+// transfer (encrypted resumable file/stream copies) are layered deliberately so
+// framing, cryptography, and bulk transfer stay testable in isolation.
 package tcpduplex
